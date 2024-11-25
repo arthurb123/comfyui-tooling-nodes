@@ -48,6 +48,7 @@ class Region(NamedTuple):
     previous: "Region" | None
     mask: Tensor | None
     conditioning: list
+    strength: float = 1.0
 
     def preprocess(self):
         result: list[Region] = []
@@ -87,6 +88,7 @@ class DefineRegion:
                 "conditioning": ("CONDITIONING",),
             },
             "optional": {
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
                 "regions": ("REGIONS",),
             },
         }
@@ -95,10 +97,11 @@ class DefineRegion:
     RETURN_TYPES = ("REGIONS",)
     FUNCTION = "define"
 
-    def define(self, mask: Tensor, conditioning: list, regions: Region | None = None):
+    def define(self, mask: Tensor, conditioning: list, strength: float = 1.0, regions: Region | None = None):
         if mask.dim() < 3:
             mask = mask.unsqueeze(0)
-        return (Region(regions, mask, conditioning),)
+        
+        return (Region(regions, mask, conditioning, strength),)
 
 
 class ListRegionMasks:
@@ -115,7 +118,6 @@ class ListRegionMasks:
 
 
 class AttentionMask:
-
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -138,10 +140,17 @@ class AttentionMask:
         region_list = regions.preprocess()
         num_conds = len(region_list)
 
-        mask = torch.stack([r.mask for r in region_list], dim=0)
-        mask_sum = mask.sum(dim=0, keepdim=True)
-        assert mask_sum.sum() > 0, "There are areas that are zero in all masks."
-        self.mask = mask / mask_sum
+        # Direct strength-based mask processing
+        masks = torch.stack([r.mask for r in region_list], dim=0)
+        strengths = torch.tensor([r.strength for r in region_list], device=masks.device)
+        
+        # Apply strength multiplication with power scaling
+        masks_weighted = masks * (strengths.view(-1, 1, 1, 1) ** 0.5)
+        
+        # Normalize to prevent total suppression
+        masks_normalized = masks_weighted / (masks_weighted.max() + 1e-8)
+        
+        self.mask = masks_normalized
 
         self.conds = [r.conditioning[0][0] for r in region_list]
         num_tokens = [cond.shape[1] for cond in self.conds]
