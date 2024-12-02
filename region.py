@@ -143,15 +143,9 @@ class AttentionMask:
         # Direct strength-based mask processing
         masks = torch.stack([r.mask for r in region_list], dim=0)
         strengths = torch.tensor([r.strength for r in region_list], device=masks.device)
+        masks_weighted = masks * strengths.view(-1, 1, 1, 1)
         
-        # Apply strength multiplication with power scaling
-        masks_weighted = masks * (strengths.view(-1, 1, 1, 1) ** 0.5)
-        
-        # Normalize to prevent total suppression
-        masks_normalized = masks_weighted / (masks_weighted.max() + 1e-8)
-        
-        self.mask = masks_normalized
-
+        self.mask = masks_weighted
         self.conds = [r.conditioning[0][0] for r in region_list]
         num_tokens = [cond.shape[1] for cond in self.conds]
 
